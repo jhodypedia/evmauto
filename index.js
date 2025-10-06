@@ -40,7 +40,7 @@ function mulBigInt(b, f) {
   return (b * p) / q;
 }
 
-// === Logger ===
+// === Logging ===
 function writeLog(entry) {
   try {
     const logs = JSON.parse(fs.readFileSync(logFile, "utf8"));
@@ -51,7 +51,7 @@ function writeLog(entry) {
   }
 }
 
-// === RPC & Relay Selectors ===
+// === RPC/Relay ===
 function getRpc(chainKey) {
   if (CONFIG.customRpc?.enabled && CONFIG.customRpc?.url)
     return CONFIG.customRpc.url;
@@ -207,14 +207,40 @@ async function sendToken(provider, wallet, tokenAddr, to, amount, relayUrl, rela
   }
 }
 
+// === Add Custom Network ===
+async function addCustomNetwork() {
+  console.clear();
+  console.log(chalk.cyan("🆕 Tambah jaringan custom ke rpc.json\n"));
+  const { key, name, rpc, relay } = await inquirer.prompt([
+    { name: "key", message: "ID singkat (misal: monad, zora, opbnb):" },
+    { name: "name", message: "Nama jaringan lengkap:" },
+    { name: "rpc", message: "RPC URL:" },
+    { name: "relay", message: "Relay URL (opsional):", default: "" }
+  ]);
+
+  const newEntry = { name, rpc };
+  if (relay) newEntry.relay_bloxroute = relay;
+  RPCS[key] = newEntry;
+  fs.writeFileSync(rpcPath, JSON.stringify(RPCS, null, 2));
+  console.log(chalk.green(`✅ ${name} berhasil disimpan di rpc.json`));
+  process.exit(0);
+}
+
 // === MAIN ===
 console.clear();
 console.log(chalk.cyan.bold("🚀 Auto Token CLI — Multi EVM + Relay + Auto Logging\n"));
 
 async function main() {
   const chains = Object.keys(RPCS).map(k => ({ name: RPCS[k].name, value: k }));
+  chains.push({ name: "🆕 Tambah jaringan custom", value: "custom_add" });
+
   const a = await inquirer.prompt([
-    { name: "chain", type: "list", message: "Pilih jaringan:", choices: chains, default: CONFIG.defaultChain },
+    { name: "chain", type: "list", message: "Pilih jaringan:", choices: chains, default: CONFIG.defaultChain }
+  ]);
+
+  if (a.chain === "custom_add") return addCustomNetwork();
+
+  const b = await inquirer.prompt([
     { name: "privateKey", message: "Masukkan Private Key:", mask: "*", default: process.env.PRIVATE_KEY },
     { name: "type", type: "list", message: "Jenis pengiriman:", choices: ["Native Coin", "Token ERC20"] },
     { name: "to", message: "Alamat tujuan:" },
@@ -226,17 +252,17 @@ async function main() {
   const relayUrl = getRelay(a.chain);
   const relayAuth = CONFIG.apiKeys?.bloxroute ? `Bearer ${CONFIG.apiKeys.bloxroute}` : null;
   const provider = new ethers.JsonRpcProvider(rpc);
-  const wallet = new ethers.Wallet(a.privateKey, provider);
+  const wallet = new ethers.Wallet(b.privateKey, provider);
 
   console.log(chalk.gray(`\n🔗 RPC: ${rpc}`));
   if (relayUrl) console.log(chalk.gray(`🚀 Relay: ${relayUrl}`));
 
-  const mult = parseFloat(a.mult);
-  if (a.type === "Native Coin")
-    await sendNative(provider, wallet, a.to, a.amount, relayUrl, relayAuth, mult);
+  const mult = parseFloat(b.mult);
+  if (b.type === "Native Coin")
+    await sendNative(provider, wallet, b.to, b.amount, relayUrl, relayAuth, mult);
   else {
     const { tokenAddr } = await inquirer.prompt([{ name: "tokenAddr", message: "Alamat contract token ERC20:" }]);
-    await sendToken(provider, wallet, tokenAddr, a.to, a.amount, relayUrl, relayAuth, mult);
+    await sendToken(provider, wallet, tokenAddr, b.to, b.amount, relayUrl, relayAuth, mult);
   }
 
   console.log(chalk.green("\n✅ Transaksi selesai — lihat logs/txlog.json"));
