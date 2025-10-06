@@ -40,13 +40,12 @@ function mulBigInt(b, f) {
   return (b * p) / q;
 }
 
-// === Logging ===
+// === Safe JSON Log (fix BigInt) ===
 function writeLog(entry) {
   try {
     const logs = JSON.parse(fs.readFileSync(logFile, "utf8"));
     logs.push({ time: new Date().toISOString(), ...entry });
-    const replacer = (key, value) =>
-      typeof value === "bigint" ? value.toString() : value;
+    const replacer = (k, v) => (typeof v === "bigint" ? v.toString() : v);
     fs.writeFileSync(logFile, JSON.stringify(logs, replacer, 2));
   } catch (e) {
     console.error("⚠️ Gagal menulis log:", e.message);
@@ -142,32 +141,45 @@ async function sendWithBump({ provider, wallet, tx, relayUrl, relayAuth, mult = 
 
 // === Send Native ===
 async function sendNative(provider, wallet, to, amount, relayUrl, relayAuth, mult) {
-  if (amount === "ALL") {
-    while (true) {
-      const bal = await provider.getBalance(wallet.address);
-      if (bal <= 0n) {
-        process.stdout.write(". polling balance...\r");
-        await sleep(3000);
-        continue;
-      }
-      const fee = await getFee(provider, mult);
-      const gas = 21000n;
-      const total = gas * fee.maxFeePerGas;
-      if (bal <= total) {
-        process.stdout.write(". not enough gas...\r");
-        await sleep(3000);
-        continue;
-      }
-      const val = bal - total;
-      const tx = { to, value: val, gasLimit: gas };
-      const rec = await sendWithBump({ provider, wallet, tx, relayUrl, relayAuth, mult });
-      writeLog({ type: "native", to, value: toEth(val), hash: rec?.transactionHash || "-", chainId: (await provider.getNetwork()).chainId });
-      return rec;
+  while (true) {
+    const bal = await provider.getBalance(wallet.address);
+    if (bal <= 0n) {
+      process.stdout.write(". polling balance...\r");
+      await sleep(3000);
+      continue;
     }
-  } else {
-    const tx = { to, value: ethers.parseEther(amount), gasLimit: 21000n };
+
+    const fee = await getFee(provider, mult);
+    const gas = 21000n;
+    const safeMargin = 2n;
+    const totalGasCost = gas * fee.maxFeePerGas * safeMargin;
+
+    if (bal <= totalGasCost) {
+      console.log(chalk.red("\n⚠️ Balance terlalu kecil, menunggu saldo cukup..."));
+      await sleep(3000);
+      continue;
+    }
+
+    let val;
+    if (amount === "ALL") val = bal - totalGasCost;
+    else val = ethers.parseEther(amount);
+
+    // === Preview sebelum kirim ===
+    console.log(chalk.cyan("\n📊 Estimasi transaksi:"));
+    console.log(chalk.gray(`💰 Balance saat ini : ${toEth(bal)} ETH`));
+    console.log(chalk.gray(`⛽ Biaya gas approx : ${toEth(totalGasCost)} ETH`));
+    console.log(chalk.gray(`📤 Akan dikirim      : ${toEth(val)} ETH`));
+    const { confirm } = await inquirer.prompt([
+      { name: "confirm", type: "confirm", message: "Lanjut kirim transaksi?", default: true }
+    ]);
+    if (!confirm) {
+      console.log(chalk.yellow("🚫 Transaksi dibatalkan oleh user."));
+      process.exit(0);
+    }
+
+    const tx = { to, value: val, gasLimit: gas };
     const rec = await sendWithBump({ provider, wallet, tx, relayUrl, relayAuth, mult });
-    writeLog({ type: "native", to, value: amount, hash: rec?.transactionHash || "-", chainId: (await provider.getNetwork()).chainId });
+    writeLog({ type: "native", to, value: toEth(val), hash: rec?.transactionHash || "-", chainId: (await provider.getNetwork()).chainId });
     return rec;
   }
 }
@@ -183,30 +195,24 @@ async function sendToken(provider, wallet, tokenAddr, to, amount, relayUrl, rela
   const token = new ethers.Contract(tokenAddr, ERC20, wallet);
   const dec = await token.decimals();
   const sym = await token.symbol().catch(() => "TOKEN");
-  if (amount === "ALL") {
-    while (true) {
-      const bal = await token.balanceOf(wallet.address);
-      if (bal <= 0n) {
-        process.stdout.write(`. waiting ${sym}...\r`);
-        await sleep(3000);
-        continue;
-      }
-      const iface = token.interface;
-      const data = iface.encodeFunctionData("transfer", [to, bal]);
-      const tx = { to: tokenAddr, data, gasLimit: 100000n };
-      const rec = await sendWithBump({ provider, wallet, tx, relayUrl, relayAuth, mult });
-      writeLog({ type: "token", token: sym, to, value: ethers.formatUnits(bal, dec), hash: rec?.transactionHash || "-", chainId: (await provider.getNetwork()).chainId });
-      return rec;
-    }
-  } else {
-    const val = ethers.parseUnits(amount, dec);
-    const iface = token.interface;
-    const data = iface.encodeFunctionData("transfer", [to, val]);
-    const tx = { to: tokenAddr, data, gasLimit: 100000n };
-    const rec = await sendWithBump({ provider, wallet, tx, relayUrl, relayAuth, mult });
-    writeLog({ type: "token", token: sym, to, value: amount, hash: rec?.transactionHash || "-", chainId: (await provider.getNetwork()).chainId });
-    return rec;
+  const bal = await token.balanceOf(wallet.address);
+  const val = amount === "ALL" ? bal : ethers.parseUnits(amount, dec);
+
+  console.log(chalk.cyan("\n📊 Estimasi token:"));
+  console.log(chalk.gray(`💰 Balance ${sym} : ${ethers.formatUnits(bal, dec)}`));
+  console.log(chalk.gray(`📤 Akan dikirim   : ${ethers.formatUnits(val, dec)}`));
+  const { confirm } = await inquirer.prompt([{ name: "confirm", type: "confirm", message: "Lanjut kirim token?", default: true }]);
+  if (!confirm) {
+    console.log(chalk.yellow("🚫 Transaksi dibatalkan oleh user."));
+    process.exit(0);
   }
+
+  const iface = token.interface;
+  const data = iface.encodeFunctionData("transfer", [to, val]);
+  const tx = { to: tokenAddr, data, gasLimit: 100000n };
+  const rec = await sendWithBump({ provider, wallet, tx, relayUrl, relayAuth, mult });
+  writeLog({ type: "token", token: sym, to, value: ethers.formatUnits(val, dec), hash: rec?.transactionHash || "-", chainId: (await provider.getNetwork()).chainId });
+  return rec;
 }
 
 // === Add Custom Network ===
@@ -250,13 +256,21 @@ async function main() {
     { name: "mult", message: "Gas multiplier (1–3):", default: "2" }
   ]);
 
+  let pk = b.privateKey.trim();
+  if (!pk.startsWith("0x")) pk = "0x" + pk;
+  if (pk.length !== 66) {
+    console.log(chalk.red("❌ Private key tidak valid. Panjang harus 64 hex + prefix 0x."));
+    process.exit(1);
+  }
+
   const rpc = getRpc(a.chain);
   const relayUrl = getRelay(a.chain);
   const relayAuth = CONFIG.apiKeys?.bloxroute ? `Bearer ${CONFIG.apiKeys.bloxroute}` : null;
   const provider = new ethers.JsonRpcProvider(rpc);
-  const wallet = new ethers.Wallet(b.privateKey, provider);
+  const wallet = new ethers.Wallet(pk, provider);
 
   console.log(chalk.gray(`\n🔗 RPC: ${rpc}`));
+  console.log(chalk.gray(`👛 Wallet: ${wallet.address}`));
   if (relayUrl) console.log(chalk.gray(`🚀 Relay: ${relayUrl}`));
 
   const mult = parseFloat(b.mult);
