@@ -1,0 +1,25 @@
+{
+  "ethereum": {
+    "name": "Ethereum Mainnet",
+    "rpc": "https://eth.llamarpc.com",
+    "relay_flashbots": "https://rpc.flashbots.net/fast"
+  },
+  "base": {
+    "name": "Base Mainnet",
+    "rpc": "https://mainnet.base.org",
+    "relay_bloxroute": "https://api.blxrbdn.com"
+  },
+  "bsc": {
+    "name": "Binance Smart Chain",
+    "rpc": "https://bsc-dataseed.binance.org/",
+    "relay_bloxroute": "https://api.blxrbdn.com"
+  },
+  "polygon": {
+    "name": "Polygon Mainnet",
+    "rpc": "https://polygon-rpc.com"
+  },
+  "arbitrum": {
+    "name": "Arbitrum One",
+    "rpc": "https://arb1.arbitrum.io/rpc"
+  }
+}
