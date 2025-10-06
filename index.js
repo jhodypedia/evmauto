@@ -45,7 +45,9 @@ function writeLog(entry) {
   try {
     const logs = JSON.parse(fs.readFileSync(logFile, "utf8"));
     logs.push({ time: new Date().toISOString(), ...entry });
-    fs.writeFileSync(logFile, JSON.stringify(logs, null, 2));
+    const replacer = (key, value) =>
+      typeof value === "bigint" ? value.toString() : value;
+    fs.writeFileSync(logFile, JSON.stringify(logs, replacer, 2));
   } catch (e) {
     console.error("⚠️ Gagal menulis log:", e.message);
   }
