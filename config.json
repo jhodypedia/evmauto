@@ -1,0 +1,16 @@
+{
+  "defaultChain": "base",
+  "customRpc": {
+    "enabled": false,
+    "url": ""
+  },
+  "relayPreference": {
+    "useFlashbots": false,
+    "useBloxroute": true,
+    "useSelfRelay": false
+  },
+  "apiKeys": {
+    "bloxroute": "",
+    "selfRelay": ""
+  }
+}
